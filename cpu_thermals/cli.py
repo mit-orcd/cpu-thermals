@@ -25,6 +25,8 @@ Examples:
   cpu-thermals --csv                 # table + recording to auto-named .csv
   cpu-thermals --csv ~/cpu.csv       # table + recording to chosen file
   cpu-thermals --csv --no-tui        # silent capture (cron / SSH friendly)
+  cpu-thermals --csv -               # CSV to stdout (TUI auto-suppressed)
+  cpu-thermals --csv - | gzip >log.gz
 """
 
 
@@ -35,6 +37,14 @@ def run(source: TempSource, renderer: Renderer, interval: float) -> None:
     # without this, `kill -INT <pid>` from a long-running session would
     # be silently ignored).
     signal.signal(signal.SIGINT, signal.default_int_handler)
+
+    # Restore default SIGPIPE handling (Python normally translates SIGPIPE
+    # into BrokenPipeError, which then leaks a noisy "Exception ignored"
+    # message during interpreter shutdown when stdout is a closed pipe).
+    # With SIG_DFL, `cpu-thermals --csv - | head` exits silently like any
+    # other well-behaved Unix tool. Windows has no SIGPIPE.
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
     sample = source.read()
     renderer.start([r.label for r in sample])
@@ -80,7 +90,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "Also record CSV (timestamp,node,sensor,celsius). With no PATH, "
             "writes to cpu_thermals-<host>-<YYYYMMDD-HHMMSS>.csv in the "
             "current directory. Append-safe: re-using a path concatenates "
-            "cleanly without duplicate headers."
+            "cleanly without duplicate headers. Use '-' for stdout "
+            "(suppresses the TUI)."
         ),
     )
     parser.add_argument(
@@ -109,6 +120,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     csv_path = _resolve_csv_path(args.csv)
     tui = not args.no_tui
+
+    # CSV-to-stdout and the live TUI both want stdout, so they cannot
+    # coexist. Auto-suppress the TUI (rather than erroring) so the obvious
+    # one-liner Just Works; print a stderr note when we did so silently,
+    # but stay quiet when the user already passed --no-tui.
+    if csv_path == "-" and tui:
+        tui = False
+        sys.stderr.write(
+            "[cpu_thermals] --csv -: TUI suppressed (stdout is the CSV)\n"
+        )
 
     # Build the renderer first so a bad flag combo (e.g. --no-tui without
     # --csv, or an unwritable CSV directory) errors before we check for the

@@ -119,7 +119,16 @@ This is useful for testing or running under unusual setups.
 | `cpu-thermals --csv`                   | Live table **and** CSV recorded to an auto-named file in the CWD.         |
 | `cpu-thermals --csv path/to/log.csv`   | Same, to your chosen path. Append-safe (no duplicate headers on re-runs). |
 | `cpu-thermals --csv --no-tui`          | Silent capture: no table, just the CSV file. Cron / SSH friendly.         |
+| `cpu-thermals --csv -`                 | CSV streamed to **stdout** for piping. TUI is auto-suppressed (stdout would clash) and a one-line stderr note tells you so; pass `--no-tui` to silence that note. |
 | `cpu-thermals --no-tui`                | Rejected: there'd be nothing to do.                                       |
+
+Pipe-friendly examples:
+
+```bash
+cpu-thermals --csv - | gzip > thermals.csv.gz       # compressed capture
+cpu-thermals --csv - | head -20                     # quick sanity check
+ssh fleetnode cpu-thermals --csv - >> all-nodes.csv # remote capture
+```
 
 The default filename is **`cpu_thermals-<hostname>-<YYYYMMDD-HHMMSS>.csv`** (for example `cpu_thermals-myhost-20260418-102614.csv`). The hostname makes the file self-identifying after it leaves the machine; the timestamp prevents accidentally clobbering a prior run.
 

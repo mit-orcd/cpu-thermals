@@ -1,0 +1,9 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart cpu_thermals
+  ansible.builtin.systemd:
+    name: "{{ cpu_thermals_service_name }}.service"
+    state: restarted

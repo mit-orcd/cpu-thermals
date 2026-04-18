@@ -1,0 +1,20 @@
+---
+# Minimal example playbook for the cpu_thermals_systemd role.
+#
+# Inventory: define an `thermal_capture` group of hosts that should
+# continuously record CPU temperatures, e.g. in inventory.ini:
+#
+#   [thermal_capture]
+#   node-01.example.com
+#   node-02.example.com
+#
+# Run: ansible-playbook -i inventory.ini site.yml
+- name: Deploy cpu_thermals as a systemd unit with logrotate
+  hosts: thermal_capture
+  become: true
+  roles:
+    - role: cpu_thermals_systemd
+      vars:
+        # Examples of overriding the role's defaults; remove or adjust as needed.
+        cpu_thermals_sample_interval: 5.0
+        cpu_thermals_logrotate_count: 14

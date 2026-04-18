@@ -1,0 +1,35 @@
+[Unit]
+Description=Continuous CPU thermal capture (cpu_thermals --csv -)
+Documentation=https://github.com/cnh/cpu_thermals
+After=network.target
+
+[Service]
+Type=simple
+
+# `--csv -` writes long-format CSV to stdout; systemd appends it to the log
+# file via StandardOutput=append:. The TUI is auto-suppressed because
+# stdout is the CSV.
+ExecStart=/usr/local/bin/cpu-thermals --csv -
+
+StandardOutput=append:/var/log/cpu_thermals/cpu_thermals.csv
+
+# Banner ("recording CSV to stdout") and the Ctrl-C summary lines that
+# cpu_thermals writes to stderr land in the journal, where they don't
+# contaminate the CSV but are still visible via `journalctl -u cpu-thermals`.
+StandardError=journal
+
+Restart=always
+RestartSec=5
+
+# Run as root for simplest sensors access. For hardening, swap in a
+# dedicated user/group with read access to /sys/class/hwmon/* and write
+# access to /var/log/cpu_thermals/. See README.md.
+# User=cpu_thermals
+# Group=cpu_thermals
+
+# Optional: keep monitoring out of the way of real workloads.
+# Nice=10
+# IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

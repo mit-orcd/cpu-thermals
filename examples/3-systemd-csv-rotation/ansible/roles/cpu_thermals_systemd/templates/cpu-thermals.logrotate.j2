@@ -1,0 +1,12 @@
+{{ cpu_thermals_log_dir }}/{{ cpu_thermals_log_file }} {
+    {{ cpu_thermals_logrotate_frequency }}
+    rotate {{ cpu_thermals_logrotate_count }}
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 {{ cpu_thermals_user }} {{ cpu_thermals_group }}
+    postrotate
+        systemctl restart {{ cpu_thermals_service_name }}.service > /dev/null 2>&1 || true
+    endscript
+}

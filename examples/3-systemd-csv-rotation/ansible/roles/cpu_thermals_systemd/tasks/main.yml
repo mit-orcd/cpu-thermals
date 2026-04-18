@@ -1,0 +1,57 @@
+---
+- name: Verify cpu-thermals binary is present on the target
+  ansible.builtin.stat:
+    path: "{{ cpu_thermals_binary_path }}"
+  register: cpu_thermals_bin_stat
+
+- name: Fail with a clear message if cpu-thermals is missing
+  ansible.builtin.assert:
+    that: cpu_thermals_bin_stat.stat.exists and cpu_thermals_bin_stat.stat.executable
+    fail_msg: >-
+      cpu-thermals binary not found at {{ cpu_thermals_binary_path }}.
+      Install it (pip / system package / wheel) before applying this role,
+      or set cpu_thermals_binary_path to the correct location.
+
+- name: Ensure the log directory exists
+  ansible.builtin.file:
+    path: "{{ cpu_thermals_log_dir }}"
+    state: directory
+    owner: "{{ cpu_thermals_user }}"
+    group: "{{ cpu_thermals_group }}"
+    mode: "0755"
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: cpu-thermals.service.j2
+    dest: "/etc/systemd/system/{{ cpu_thermals_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart cpu_thermals
+
+- name: Install the logrotate config
+  ansible.builtin.template:
+    src: cpu-thermals.logrotate.j2
+    dest: "/etc/logrotate.d/{{ cpu_thermals_service_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: cpu_thermals_logrotate_enabled
+
+- name: Remove the logrotate config when disabled
+  ansible.builtin.file:
+    path: "/etc/logrotate.d/{{ cpu_thermals_service_name }}"
+    state: absent
+  when: not cpu_thermals_logrotate_enabled
+
+- name: Reload systemd before enabling (in case the unit is brand new)
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start the cpu-thermals service
+  ansible.builtin.systemd:
+    name: "{{ cpu_thermals_service_name }}.service"
+    state: "{{ cpu_thermals_service_state }}"
+    enabled: "{{ cpu_thermals_service_enabled }}"

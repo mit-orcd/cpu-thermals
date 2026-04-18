@@ -1,0 +1,21 @@
+[Unit]
+Description=Continuous CPU thermal capture (cpu_thermals --csv -)
+Documentation=https://github.com/cnh/cpu_thermals
+After=network.target
+
+[Service]
+Type=simple
+
+ExecStart={{ cpu_thermals_binary_path }} --csv - {{ cpu_thermals_sample_interval }}
+
+StandardOutput=append:{{ cpu_thermals_log_dir }}/{{ cpu_thermals_log_file }}
+StandardError=journal
+
+Restart=always
+RestartSec={{ cpu_thermals_restart_sec }}
+
+User={{ cpu_thermals_user }}
+Group={{ cpu_thermals_group }}
+
+[Install]
+WantedBy=multi-user.target

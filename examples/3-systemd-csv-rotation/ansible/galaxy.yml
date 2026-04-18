@@ -1,0 +1,22 @@
+---
+# Sample collection wrapper. Edit `namespace` and `name` before running
+# `ansible-galaxy collection build` / `publish`. The literal value
+# `namespace: local` will not pass Galaxy's name validation.
+namespace: local
+name: cpu_thermals
+version: 0.1.0
+readme: README.md
+authors:
+  - "change-me <you@example.com>"
+description: cpu_thermals systemd deployment role.
+license:
+  - MIT
+tags:
+  - monitoring
+  - system
+  - thermal
+repository: https://github.com/cnh/cpu_thermals
+documentation: https://github.com/cnh/cpu_thermals
+issues: https://github.com/cnh/cpu_thermals/issues
+build_ignore:
+  - .gitignore

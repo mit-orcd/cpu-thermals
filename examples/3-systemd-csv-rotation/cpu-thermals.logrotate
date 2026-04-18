@@ -1,0 +1,15 @@
+/var/log/cpu_thermals/cpu_thermals.csv {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root root
+    postrotate
+        # Restart so the new file gets a fresh CSV header (cpu_thermals
+        # always writes the header on stdout startup). Loses ~5s of
+        # data per rotation, which is fine for thermal monitoring.
+        systemctl restart cpu-thermals.service > /dev/null 2>&1 || true
+    endscript
+}

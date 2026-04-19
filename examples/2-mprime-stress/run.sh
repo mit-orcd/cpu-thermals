@@ -11,6 +11,7 @@
 #
 # Tunables (env vars):
 #   DURATION         seconds per phase             (default 10)
+#   KILL_AFTER       SIGKILL grace after SIGTERM   (default 5)
 #   SAMPLE_INTERVAL  cpu_thermals refresh seconds  (default 0.5)
 #   OUTPUT_DIR       output directory              (default ./results/<ts>)
 #   MPRIME_URL       override the download URL     (default upstream)
@@ -22,6 +23,10 @@
 set -euo pipefail
 
 DURATION="${DURATION:-10}"
+# Seconds to wait after SIGTERM before sending SIGKILL.  mprime's
+# torture test can hang during shutdown (thread-join, I/O flush) after
+# catching SIGTERM, leaving `timeout` waiting forever.
+KILL_AFTER="${KILL_AFTER:-5}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.5}"
 DRYRUN="${DRYRUN:-0}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results/$(date +%Y%m%d-%H%M%S)}"
@@ -253,13 +258,16 @@ phase() {
     echo ">> Phase '$name' (${DURATION}s): $*"
 
     # Capture the underlying command's exit code without aborting the run.
-    # `timeout` returns 124 when it had to SIGTERM the child (which is
-    # our expected case for an infinite-running mprime); 137 if it had
-    # to SIGKILL after the grace period; 143 if the child caught SIGTERM
-    # and exited cleanly. Any other non-zero is a real failure (bad
-    # taskset mask, missing exec bit, broken mprime, etc.) and we want
-    # to know -- the previous `|| true` swallowed everything and gave
-    # false confidence.
+    # `timeout -k $KILL_AFTER` sends SIGTERM when the duration expires,
+    # then SIGKILL after KILL_AFTER more seconds if the process hasn't
+    # exited.  The SIGKILL backstop is essential: mprime can hang during
+    # shutdown (thread-join / I/O flush) after catching SIGTERM, leaving
+    # `timeout` (and this script) waiting indefinitely.
+    #
+    # Exit codes: 124 = SIGTERM killed it, 137 = SIGKILL killed it,
+    # 143 = child caught SIGTERM and exited cleanly.  Any other non-zero
+    # is a real failure (bad taskset mask, missing exec bit, broken
+    # mprime, etc.) and we want to know.
     rc=0
     ( "$@" ) </dev/null >/dev/null 2>&1 || rc=$?
     end_iso=$(iso_now)
@@ -297,11 +305,11 @@ if [[ "$SOCKETS" -ge 2 ]] && command -v taskset >/dev/null 2>&1; then
         n_phys=$(_one_per_core_on_socket "$s" | tr , '\n' | wc -l | tr -d ' ')
         total_phys=$((total_phys + n_phys))
         write_mprime_config "$n_phys"
-        phase "socket-$s" "$TIMEOUT_CMD" "$DURATION" taskset -c "$all_cpus" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
+        phase "socket-$s" "$TIMEOUT_CMD" -k "$KILL_AFTER" "$DURATION" taskset -c "$all_cpus" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
     done
     write_mprime_config "$total_phys"
     # No taskset — let mprime use all CPUs across both sockets.
-    phase "all-sockets" "$TIMEOUT_CMD" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
+    phase "all-sockets" "$TIMEOUT_CMD" -k "$KILL_AFTER" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
 else
     # Single-socket (or macOS) -> one combined phase.
     if [[ -f /proc/cpuinfo ]]; then
@@ -311,7 +319,7 @@ else
         n_phys="$TOTAL_CPUS"
     fi
     write_mprime_config "$n_phys"
-    phase "all-cores" "$TIMEOUT_CMD" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
+    phase "all-cores" "$TIMEOUT_CMD" -k "$KILL_AFTER" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
 fi
 
 echo ">> Done. Results in: $OUTPUT_DIR"

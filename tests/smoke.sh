@@ -142,5 +142,29 @@ grep -q "postrotate" "$LR" || fail "logrotate config missing postrotate"
 grep -q "endscript"  "$LR" || fail "logrotate config missing endscript"
 ok "logrotate config is well-formed"
 
+
+# ------------------------------------------------ apptainer .def files
+
+section "examples/ apptainer .def files"
+
+# Glob all *.def files anywhere under examples/ so new ones get covered
+# automatically. We don't actually `apptainer build` -- Apptainer isn't
+# installable on the default GitHub/GitLab Linux runners without
+# significant setup, and that's out of proportion to the value. We do
+# verify each .def has the required sections so it doesn't silently rot.
+def_files=()
+while IFS= read -r f; do
+    def_files+=("$f")
+done < <(find examples -type f -name '*.def' | sort)
+[[ "${#def_files[@]}" -gt 0 ]] || fail "no .def files found under examples/"
+
+for d in "${def_files[@]}"; do
+    for required in '^Bootstrap:' '^From:' '^%post' '^%runscript'; do
+        grep -qE "$required" "$d" || fail "$d missing section/header: $required"
+    done
+done
+ok "${#def_files[@]} apptainer .def files have required headers + sections"
+
+
 echo
 echo "All checks passed."

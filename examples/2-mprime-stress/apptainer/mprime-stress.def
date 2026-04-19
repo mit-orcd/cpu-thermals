@@ -1,0 +1,98 @@
+Bootstrap: docker
+From: debian:12-slim
+
+# We use debian:12-slim (not alpine) because the prebuilt mprime binary
+# from mersenne.org is dynamically linked against glibc:
+#     $ ldd mprime
+#         libpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0
+#         libm.so.6       => /lib/x86_64-linux-gnu/libm.so.6
+#         libc.so.6       => /lib/x86_64-linux-gnu/libc.so.6
+# Alpine ships musl, not glibc, so mprime would fail to start there.
+# debian:12-slim adds ~50 MB over Alpine but is the honest fix; gcompat
+# (the Alpine glibc shim) covers some workloads but not reliably mprime.
+
+%files
+    cpu_thermals /opt/cpu_thermals/cpu_thermals
+    pyproject.toml /opt/cpu_thermals/pyproject.toml
+    examples/2-mprime-stress/run.sh /opt/stress/run.sh
+    examples/2-mprime-stress/apptainer/container-entry.sh /opt/stress/container-entry.sh
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        coreutils \
+        curl \
+        lm-sensors \
+        python3 \
+        python3-pip \
+        tar \
+        util-linux
+    # Install cpu_thermals (--break-system-packages: Debian 12's Python is
+    # PEP 668 externally-managed, same as Alpine; standard pattern in
+    # containers where there's no shared system to disturb).
+    cd /opt/cpu_thermals
+    python3 -m pip install --no-cache-dir --break-system-packages .
+    rm -rf /opt/cpu_thermals
+    # Bake mprime into the image at /opt/stress/mprime/. Pinned to the
+    # same version run.sh defaults to. Apptainer has no build-args, so
+    # if you need a different mprime, edit this URL and rebuild.
+    mkdir -p /opt/stress/mprime
+    curl -fL https://www.mersenne.org/download/software/v30/30.19/p95v3019b20.linux64.tar.gz \
+        -o /tmp/mprime.tar.gz
+    tar -xzf /tmp/mprime.tar.gz -C /opt/stress/mprime
+    rm /tmp/mprime.tar.gz
+    chmod +x /opt/stress/mprime/mprime
+    chmod +x /opt/stress/run.sh /opt/stress/container-entry.sh
+    # Slim apt artefacts.
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    export PATH=/usr/local/bin:/usr/bin:/bin:$PATH
+    export DEBIAN_FRONTEND=noninteractive
+
+%runscript
+    exec /opt/stress/container-entry.sh "$@"
+
+%labels
+    Author cnh
+    Project cpu_thermals
+    Version 0.1.0
+    Description mprime stress harness with cpu_thermals CSV recording
+
+%help
+    mprime stress + cpu_thermals CSV recording, packaged for Apptainer.
+
+    Build:  ./build.sh
+    Run:    ./run.sh                  # ~10s phase(s) using upstream defaults
+            DURATION=30 ./run.sh      # 30s per phase
+                                      # results land under $PWD/results/<ts>/
+
+    What this image carries:
+        debian:12-slim base, python3, the cpu_thermals package, the
+        lm-sensors userspace binary + libsensors, taskset (util-linux),
+        timeout (coreutils), bash, curl, tar, AND a baked-in mprime
+        binary at /opt/stress/mprime/mprime. Build-time only: ca-certs +
+        curl, used to fetch mprime; runtime needs no internet.
+
+    What the host must provide:
+        1. Linux x86_64 kernel (mprime is x86_64-only; arm64 hosts
+           cannot run this image).
+        2. The right hwmon driver module loaded for your CPU
+           (auto-loaded by udev on every modern distro):
+               Intel  -> coretemp
+               AMD    -> k10temp
+        3. Apptainer 1.x (or legacy Singularity 3.x) on PATH.
+
+    Verify the host is ready (no install required):
+        uname -m                              # must be x86_64
+        ls /sys/class/hwmon/
+        cat /sys/class/hwmon/hwmon*/name      # must include coretemp or k10temp
+
+    Apptainer auto-mounts $HOME, $PWD, /tmp, /sys, and (with most setups)
+    /proc, so sensors, taskset, and result files Just Work without
+    explicit --bind flags.

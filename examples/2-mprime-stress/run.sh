@@ -129,11 +129,17 @@ EOF
 # sysctl; multi-socket pinning is not attempted there anyway.
 
 # Emit "processor physical_id core_id" triples, one per logical CPU.
+# /proc/cpuinfo is a sequence of blank-line-separated blocks, each
+# containing "processor : N", "physical id : N", "core id : N" lines.
+# We accumulate state across a block and emit on "core id" (which
+# appears last of the three).  On VMs and some single-socket kernels
+# "physical id" may be absent; we default it to 0 so downstream
+# functions that filter by socket still work.
 _cpuinfo_topology() {
     awk '
-        /^processor/   { p = $NF }
+        /^processor/   { p = $NF; s = "" }
         /^physical id/ { s = $NF }
-        /^core id/     { print p, s, $NF }
+        /^core id/     { if (s == "") s = 0; print p, s, $NF }
     ' /proc/cpuinfo
 }
 
@@ -144,7 +150,9 @@ _cpus_on_socket() {
 }
 
 # One logical CPU per physical core on socket $1.
-# Picks the first processor seen for each unique (physical_id, core_id).
+# Picks the first processor seen for each unique (physical_id, core_id),
+# so the count matches physical cores — one FFT worker per core is the
+# thermal sweet-spot; SMT siblings add scheduling noise, not extra heat.
 _one_per_core_on_socket() {
     _cpuinfo_topology | awk -v s="$1" '
         $2 == s {
@@ -162,7 +170,12 @@ else
     SOCKETS=1
     TOTAL_CPUS=$(sysctl -n hw.physicalcpu 2>/dev/null || echo 1)
 fi
+# Guard against unexpected empty or zero from malformed /proc/cpuinfo.
 SOCKETS="${SOCKETS:-1}"
+if [[ "$SOCKETS" -eq 0 ]] 2>/dev/null; then
+    echo "warning: /proc/cpuinfo lacks physical id / core id fields; assuming 1 socket" >&2
+    SOCKETS=1
+fi
 
 echo ">> Detected: $SOCKETS socket(s), $TOTAL_CPUS logical CPU(s)"
 
@@ -176,19 +189,21 @@ if [[ "$DRYRUN" == "1" ]]; then
     if [[ -f /proc/cpuinfo ]] && [[ "$SOCKETS" -ge 2 ]]; then
         for s in $(seq 0 $((SOCKETS - 1))); do
             all_cpus=$(_cpus_on_socket "$s")
-            phys_cpus=$(_one_per_core_on_socket "$s")
-            n_phys=$(echo "$phys_cpus" | tr , '\n' | wc -l | tr -d ' ')
-            echo ">> socket $s:  taskset mask = $all_cpus"
-            echo "              workers = $n_phys (one per physical core)"
+            n_logical=$(echo "$all_cpus" | tr , '\n' | wc -l | tr -d ' ')
+            n_phys=$(_one_per_core_on_socket "$s" | tr , '\n' | wc -l | tr -d ' ')
+            echo ">> socket $s:  $n_logical logical CPUs, $n_phys physical cores -> $n_phys workers"
+            echo "              pinned CPUs = $all_cpus"
         done
     elif [[ -f /proc/cpuinfo ]]; then
-        phys_cpus=$(_one_per_core_on_socket 0)
-        n_phys=$(echo "$phys_cpus" | tr , '\n' | wc -l | tr -d ' ')
-        echo ">> single socket:  workers = $n_phys (one per physical core)"
+        all_cpus=$(_cpus_on_socket 0)
+        n_logical=$(echo "$all_cpus" | tr , '\n' | wc -l | tr -d ' ')
+        n_phys=$(_one_per_core_on_socket 0 | tr , '\n' | wc -l | tr -d ' ')
+        echo ">> single socket:  $n_logical logical CPUs, $n_phys physical cores -> $n_phys workers"
+        echo "              CPUs = $all_cpus"
     else
         echo ">> single socket (macOS):  workers = $TOTAL_CPUS"
     fi
-    echo ">> (dry run — not launching mprime)"
+    echo ">> (dry run — not launching mprime)" >&2
     exit 0
 fi
 
@@ -265,6 +280,11 @@ phase() {
     sleep 2   # brief cool-down between phases
 }
 
+if [[ "$SOCKETS" -ge 2 ]] && ! command -v taskset >/dev/null 2>&1; then
+    echo "warning: $SOCKETS sockets detected but 'taskset' not found (install util-linux)." >&2
+    echo "         Falling back to single combined phase (no per-socket pinning)." >&2
+fi
+
 if [[ "$SOCKETS" -ge 2 ]] && command -v taskset >/dev/null 2>&1; then
     # Per-socket pinning, then both sockets together.
     # WorkerThreads = physical cores (one FFT worker per core; running
@@ -280,6 +300,7 @@ if [[ "$SOCKETS" -ge 2 ]] && command -v taskset >/dev/null 2>&1; then
         phase "socket-$s" "$TIMEOUT_CMD" "$DURATION" taskset -c "$all_cpus" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
     done
     write_mprime_config "$total_phys"
+    # No taskset — let mprime use all CPUs across both sockets.
     phase "all-sockets" "$TIMEOUT_CMD" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
 else
     # Single-socket (or macOS) -> one combined phase.

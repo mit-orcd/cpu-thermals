@@ -27,7 +27,21 @@ Examples:
   cpu-thermals --csv --no-tui        # silent capture (cron / SSH friendly)
   cpu-thermals --csv -               # CSV to stdout (TUI auto-suppressed)
   cpu-thermals --csv - | gzip >log.gz
+
+Sub-commands:
+  cpu-thermals stats CSVFILE         # per-sensor statistics from a recorded CSV
+  cpu-thermals stats CSVFILE --plot  # also draw a Unicode sparkline per sensor
 """
+
+
+# Sub-command names recognised by the dispatcher in main(). When argv[0]
+# matches one of these, we delegate; otherwise we fall through to the
+# legacy monitor parser, so `cpu-thermals 0.5 --csv -` keeps working
+# unchanged. Adding a new sub-command means: add the name here, add a
+# branch in _dispatch_subcommand below, ship a sub-package with a
+# `run(argv) -> int` entry. See agents/AGENT_INSTRUCTIONS.md for the
+# full recipe.
+SUBCOMMANDS = frozenset({"stats"})
 
 
 def run(source: TempSource, renderer: Renderer, interval: float) -> None:
@@ -134,7 +148,37 @@ def _resolve_csv_path(value: Optional[str]) -> Optional[str]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Entry point used by both ``python -m cpu_thermals`` and the console script."""
+    """Entry point used by both ``python -m cpu_thermals`` and the console script.
+
+    Dispatch shape: if argv[0] names a known sub-command (see
+    SUBCOMMANDS above), hand the remaining args to that sub-command's
+    ``run()``. Otherwise treat the whole argv as the legacy monitor
+    invocation -- this keeps ``cpu-thermals 0.5 --csv -`` working
+    exactly as it always has, without requiring users to re-learn a
+    ``cpu-thermals monitor 0.5 --csv -`` shape.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in SUBCOMMANDS:
+        return _dispatch_subcommand(argv[0], argv[1:])
+    return _monitor_main(argv)
+
+
+def _dispatch_subcommand(name: str, sub_argv: Sequence[str]) -> int:
+    """Look up the named sub-command and call its ``run(argv)`` entry.
+
+    Imports are deliberately lazy so a plain ``cpu-thermals`` (monitor)
+    invocation never pays the cost of importing a sub-command's
+    transitive dependencies.
+    """
+    if name == "stats":
+        from .stats import run as stats_run
+        return stats_run(sub_argv)
+    # Should be unreachable: SUBCOMMANDS is the source of truth.
+    raise SystemExit(f"unknown subcommand: {name!r}")
+
+
+def _monitor_main(argv: Sequence[str]) -> int:
+    """The original cpu-thermals invocation: live monitor + optional CSV."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 

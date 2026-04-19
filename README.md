@@ -10,6 +10,7 @@ A small CLI utility that displays live CPU temperatures with color-coded reading
 - Auto-detects the right backend for the current OS, with a `--backend` override
 - `--csv` recording to a self-describing file (table stays on screen too)
 - `--no-tui` for silent, headless capture (cron / SSH friendly)
+- `cpu-thermals stats CSVFILE` post-processing sub-command for per-sensor min/max/mean/median/stdev/kurtosis (with optional `--plot` sparkline)
 - Friendly startup check that tells you exactly how to install the missing tool per platform
 
 ## Requirements
@@ -145,6 +146,28 @@ timestamp,node,sensor,celsius
 A startup banner (`[cpu_thermals] recording CSV to <path>`) and the final row-count summary are written to **stderr**, so they never end up inside the CSV file.
 
 Press `Ctrl-C` to exit.
+
+### Stats sub-command (`cpu-thermals stats CSVFILE`)
+
+Once you have a recorded CSV, the `stats` sub-command produces per-sensor descriptive statistics plus the capture window:
+
+```bash
+cpu-thermals stats ./cpu_thermals-myhost-20260418-114429.csv
+cpu-thermals stats ./out.csv --plot
+```
+
+Sample output:
+
+```
+file:    ./cpu_thermals-myhost-20260418-114429.csv
+window:  2026-04-18T11:43:57-04:00  ->  2026-04-18T11:44:29-04:00   (32s)
+
+sensor      n      min      max     mean   median    stdev     kurt
+CPU         64     52.4     88.7     65.2     63.0      8.4    -0.70
+GPU         64     43.8     51.2     46.5     46.1      2.1    -0.30
+```
+
+With `--plot`, a one-line Unicode sparkline is appended per sensor (ASCII fallback on non-UTF-8 terminals). `stdev` is **population** stdev (`statistics.pstdev`); `kurt` is **excess** kurtosis (Fisher; normal → 0) using the biased moment estimator that matches `scipy.stats.kurtosis` defaults. See [`cpu_thermals/stats/README.md`](cpu_thermals/stats/README.md) for the full output grammar, edge cases, and a recipe for adding new statistics.
 
 ### Exit codes
 

@@ -159,6 +159,43 @@ grep -q "endscript"  "$LR" || fail "logrotate config missing endscript"
 ok "logrotate config is well-formed"
 
 
+# ----------------------------------------------------- stats subcommand
+
+section "stats subcommand"
+
+# Generate a small CSV via the fake backend (3 reads * 2 sensors). The
+# FiniteFake returns constant values, so we expect the constant-data
+# edge case in the output: stdev = 0.0 and kurtosis = n/a (zero variance).
+# We assert the n/a marker below as a regression check on that path.
+python3 tests/fake_run.py 0.001 --csv "$TMP/in.csv" --no-tui >/dev/null 2>/dev/null
+
+python3 -m cpu_thermals stats "$TMP/in.csv" >"$TMP/out" 2>"$TMP/err"
+grep -q "^sensor"  "$TMP/out" || fail "stats output missing sensor header"
+grep -q "^CPU "    "$TMP/out" || fail "stats output missing CPU row"
+grep -q "^GPU "    "$TMP/out" || fail "stats output missing GPU row"
+grep -q "window:"  "$TMP/out" || fail "stats output missing capture window"
+grep -q "n/a"      "$TMP/out" || fail "stats output should mark kurt=n/a for constant data"
+ok "stats prints per-sensor table with capture window"
+
+python3 -m cpu_thermals stats "$TMP/in.csv" --plot >"$TMP/out" 2>/dev/null
+grep -q "sparkline" "$TMP/out" || fail "--plot output missing sparkline column"
+ok "stats --plot adds a sparkline column"
+
+! python3 -m cpu_thermals stats /no/such/file.csv 2>"$TMP/err" \
+    || fail "stats with missing file should exit non-zero"
+grep -q "cannot open CSV file" "$TMP/err" \
+    || fail "stats missing-file error should mention 'cannot open CSV file'"
+ok "stats with missing file fails clearly"
+
+# Backward compat: the legacy monitor invocation still works after the
+# sub-command dispatch refactor (positional interval, --help, the works).
+python3 -m cpu_thermals --help >/dev/null \
+    || fail "monitor --help broke after subcommand dispatch"
+python3 -m cpu_thermals --help | grep -q "Sub-commands:" \
+    || fail "monitor --help should advertise the new sub-commands section"
+ok "legacy monitor invocation still works after dispatch refactor"
+
+
 # ------------------------------------------------ apptainer .def files
 
 section "examples/ apptainer .def files"

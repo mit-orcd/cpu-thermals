@@ -18,6 +18,8 @@ from typing import Sequence
 
 from ..backends import Reading
 
+from .._text import supports_utf8
+
 RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
@@ -29,19 +31,12 @@ BAR_MIN_C = 40
 BAR_MAX_C = 100
 
 
-def _supports_utf8() -> bool:
-    """True if stdout looks like it can encode our default block + degree
-    glyphs. Conservative: only treats utf-8/utf8 as supported, falls back
-    to ASCII otherwise. Matters for minimal server shells, serial
-    consoles, and locked-down LANG=C environments."""
-    enc = (sys.stdout.encoding or "").lower()
-    return "utf" in enc
-
-
 # Pick the bar fill and degree marker once at import time. The defaults
 # look right on a modern terminal; the ASCII fallback keeps the table
 # legible (and not garbled) when stdout can't encode the block character.
-if _supports_utf8():
+# UTF-8 detection lives in cpu_thermals._text so the stats sub-package
+# can reuse the same predicate without importing this whole TUI module.
+if supports_utf8():
     _BAR_FILL = "\u2588"   # U+2588 FULL BLOCK
     _DEGREE = "\u00b0C"    # U+00B0 DEGREE SIGN + C
 else:

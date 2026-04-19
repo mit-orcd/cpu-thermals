@@ -94,6 +94,11 @@ fi
 # Generate the headless torture-test config. mprime reads local.txt + prime.txt
 # from the working dir given by `-W` and runs without prompting when
 # StressTester=1 is set in local.txt.
+#
+# EnableSetAffinity=0 is critical: by default mprime calls
+# sched_setaffinity() per worker thread, overriding any process-level
+# mask set by `taskset`.  Disabling it lets the inherited taskset mask
+# govern which CPUs the workers can run on.
 write_mprime_config() {
     local threads="$1"
     cat > "$MPRIME_DIR/local.txt" <<EOF
@@ -109,6 +114,8 @@ TortureType=12
 TortureThreads=$threads
 TortureMem=0
 TortureTime=1
+EnableSetAffinity=0
+AffinityVerbosityTorture=1
 EOF
 }
 
@@ -232,17 +239,29 @@ phase() {
 
 if [[ "$SOCKETS" -ge 2 ]] && command -v taskset >/dev/null 2>&1; then
     # Per-socket pinning, then both sockets together.
+    # WorkerThreads = physical cores (one FFT worker per core; running
+    # two workers per SMT pair adds scheduling overhead with negligible
+    # extra thermal stress).  The taskset mask includes all logical CPUs
+    # on the socket so the OS scheduler still has SMT freedom.
+    total_phys=0
     for s in $(seq 0 $((SOCKETS - 1))); do
-        cores=$(_cpus_on_socket "$s")
-        n_cores=$(echo "$cores" | tr , '\n' | wc -l | tr -d ' ')
-        write_mprime_config "$n_cores"
-        phase "socket-$s" "$TIMEOUT_CMD" "$DURATION" taskset -c "$cores" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
+        all_cpus=$(_cpus_on_socket "$s")
+        n_phys=$(_one_per_core_on_socket "$s" | tr , '\n' | wc -l | tr -d ' ')
+        total_phys=$((total_phys + n_phys))
+        write_mprime_config "$n_phys"
+        phase "socket-$s" "$TIMEOUT_CMD" "$DURATION" taskset -c "$all_cpus" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
     done
-    write_mprime_config "$TOTAL_CPUS"
+    write_mprime_config "$total_phys"
     phase "all-sockets" "$TIMEOUT_CMD" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
 else
     # Single-socket (or macOS) -> one combined phase.
-    write_mprime_config "$TOTAL_CPUS"
+    if [[ -f /proc/cpuinfo ]]; then
+        n_phys=$(_one_per_core_on_socket 0 | tr , '\n' | wc -l | tr -d ' ')
+    else
+        # macOS sysctl hw.physicalcpu already excludes SMT.
+        n_phys="$TOTAL_CPUS"
+    fi
+    write_mprime_config "$n_phys"
     phase "all-cores" "$TIMEOUT_CMD" "$DURATION" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"
 fi
 

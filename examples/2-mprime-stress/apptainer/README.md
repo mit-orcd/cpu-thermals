@@ -96,7 +96,7 @@ The temporary work directory is cleaned up on exit (via a `trap`); the `results/
 
 The upstream `run.sh`'s socket-aware logic Just Works inside the container:
 
-- `lscpu` reads the host's `/sys/devices/system/cpu/*` (auto-mounted).
+- `/proc/cpuinfo` is visible from the host (auto-mounted); `run.sh` parses it for socket topology.
 - `taskset` (from Alpine's `util-linux` package) is bundled in the image.
 - On 2+ socket Linux hosts you'll see `socket-0`, `socket-1`, `all-sockets` phases; on single-socket hosts you'll see one combined `all-cores` phase.
 

@@ -5,7 +5,7 @@
 # Produces  results/<timestamp>/temps.csv   (one row per sensor sample)
 #           results/<timestamp>/phases.csv  (start/end of each load phase)
 #
-# Phases (auto-selected from lscpu output):
+# Phases (auto-selected from /proc/cpuinfo topology):
 #   1 socket  -> "all-cores"
 #   2 sockets -> "socket-0", "socket-1", "all-sockets"
 #
@@ -113,11 +113,43 @@ EOF
 }
 
 # ---------------------------------------------------------------- topology
+#
+# On Linux, derive socket count and per-socket CPU lists from
+# /proc/cpuinfo — the authoritative kernel interface for processor,
+# physical id, and core id.  On macOS (no /proc/cpuinfo) fall back to
+# sysctl; multi-socket pinning is not attempted there anyway.
 
-if command -v lscpu >/dev/null 2>&1; then
-    SOCKETS=$(lscpu | awk -F: '/^Socket\(s\):/ {gsub(/ /,"",$2); print $2}')
+# Emit "processor physical_id core_id" triples, one per logical CPU.
+_cpuinfo_topology() {
+    awk '
+        /^processor/   { p = $NF }
+        /^physical id/ { s = $NF }
+        /^core id/     { print p, s, $NF }
+    ' /proc/cpuinfo
+}
+
+# All logical CPUs on socket $1 (comma-separated, sorted numerically).
+_cpus_on_socket() {
+    _cpuinfo_topology | awk -v s="$1" '$2 == s { print $1 }' \
+        | sort -n | paste -sd, -
+}
+
+# One logical CPU per physical core on socket $1.
+# Picks the first processor seen for each unique (physical_id, core_id).
+_one_per_core_on_socket() {
+    _cpuinfo_topology | awk -v s="$1" '
+        $2 == s {
+            key = $2 ":" $3
+            if (!(key in seen)) { seen[key] = 1; print $1 }
+        }
+    ' | sort -n | paste -sd, -
+}
+
+if [[ -f /proc/cpuinfo ]]; then
+    SOCKETS=$(_cpuinfo_topology | awk '{ print $2 }' | sort -un | wc -l)
     TOTAL_CPUS=$(nproc)
 else
+    # macOS — no /proc/cpuinfo, no multi-socket pinning.
     SOCKETS=1
     TOTAL_CPUS=$(sysctl -n hw.physicalcpu 2>/dev/null || echo 1)
 fi
@@ -201,7 +233,7 @@ phase() {
 if [[ "$SOCKETS" -ge 2 ]] && command -v taskset >/dev/null 2>&1; then
     # Per-socket pinning, then both sockets together.
     for s in $(seq 0 $((SOCKETS - 1))); do
-        cores=$(lscpu -p=cpu,socket | awk -F, -v s="$s" '!/^#/ && $2==s {print $1}' | paste -sd, -)
+        cores=$(_cpus_on_socket "$s")
         n_cores=$(echo "$cores" | tr , '\n' | wc -l | tr -d ' ')
         write_mprime_config "$n_cores"
         phase "socket-$s" "$TIMEOUT_CMD" "$DURATION" taskset -c "$cores" "$MPRIME_DIR/$MPRIME_BIN" -t -W "$MPRIME_DIR"

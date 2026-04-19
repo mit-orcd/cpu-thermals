@@ -3,6 +3,12 @@ Description=Continuous CPU thermal capture (cpu_thermals --csv -)
 Documentation=https://github.com/cnh/cpu_thermals
 After=network.target
 
+# Cap restart attempts so a permanently broken config (wrong binary
+# path, missing kernel module, etc.) fails the unit instead of looping
+# forever and flooding the journal.
+StartLimitBurst={{ cpu_thermals_start_limit_burst }}
+StartLimitIntervalSec={{ cpu_thermals_start_limit_interval_sec }}
+
 [Service]
 Type=simple
 
@@ -11,7 +17,9 @@ ExecStart={{ cpu_thermals_binary_path }} --csv - {{ cpu_thermals_sample_interval
 StandardOutput=append:{{ cpu_thermals_log_dir }}/{{ cpu_thermals_log_file }}
 StandardError=journal
 
-Restart=always
+# Restart only on actual failures (not on clean stop, so logrotate's
+# postrotate `systemctl restart` doesn't count against StartLimitBurst).
+Restart=on-failure
 RestartSec={{ cpu_thermals_restart_sec }}
 
 User={{ cpu_thermals_user }}

@@ -29,6 +29,26 @@ BAR_MIN_C = 40
 BAR_MAX_C = 100
 
 
+def _supports_utf8() -> bool:
+    """True if stdout looks like it can encode our default block + degree
+    glyphs. Conservative: only treats utf-8/utf8 as supported, falls back
+    to ASCII otherwise. Matters for minimal server shells, serial
+    consoles, and locked-down LANG=C environments."""
+    enc = (sys.stdout.encoding or "").lower()
+    return "utf" in enc
+
+
+# Pick the bar fill and degree marker once at import time. The defaults
+# look right on a modern terminal; the ASCII fallback keeps the table
+# legible (and not garbled) when stdout can't encode the block character.
+if _supports_utf8():
+    _BAR_FILL = "\u2588"   # U+2588 FULL BLOCK
+    _DEGREE = "\u00b0C"    # U+00B0 DEGREE SIGN + C
+else:
+    _BAR_FILL = "#"
+    _DEGREE = " C"
+
+
 def get_color(temp: float) -> str:
     """Pick the ANSI color escape for a given temperature."""
     if temp >= 90.0:
@@ -44,11 +64,15 @@ def draw_bar(
     max_t: int = BAR_MAX_C,
     width: int = BAR_WIDTH,
 ) -> str:
-    """Render a fixed-width ASCII bar for ``temp``, colored by severity."""
+    """Render a fixed-width bar for ``temp``, colored by severity.
+
+    Uses U+2588 (full block) when stdout supports UTF-8, falls back to
+    plain '#' otherwise. See :func:`_supports_utf8`.
+    """
     t = max(min_t, min(temp, max_t))
     fraction = (t - min_t) / (max_t - min_t)
     filled_len = int(width * fraction)
-    bar = "█" * filled_len + "-" * (width - filled_len)
+    bar = _BAR_FILL * filled_len + "-" * (width - filled_len)
     return f"{get_color(temp)}{bar}{RESET}"
 
 
@@ -66,7 +90,7 @@ def _format_row(readings: Sequence[Reading]) -> str:
     now = datetime.now().strftime("%H:%M:%S")
     parts = [f"{now:<10}"]
     for r in readings:
-        val = f"{r.celsius:>5.1f}°C"
+        val = f"{r.celsius:>5.1f}{_DEGREE}"
         parts.append(f"{get_color(r.celsius)}{val:<{VALUE_WIDTH}}{RESET}")
     for r in readings:
         parts.append(draw_bar(r.celsius))

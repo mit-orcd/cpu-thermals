@@ -51,13 +51,25 @@ ok "--backend rejects unknown values"
     || fail "non-numeric interval should exit non-zero"
 ok "interval must be a number"
 
+# Reject interval == 0 (would tight-loop) and negative intervals
+# (would crash time.sleep). Both used to slip through `type=float`.
+! python3 -m cpu_thermals 0 2>"$TMP/err" \
+    || fail "interval 0 should exit non-zero"
+grep -q "must be > 0" "$TMP/err" \
+    || fail "interval 0 error should mention 'must be > 0'"
+! python3 -m cpu_thermals -- -1.5 2>"$TMP/err" \
+    || fail "negative interval should exit non-zero"
+grep -q "must be > 0" "$TMP/err" \
+    || fail "negative interval error should mention 'must be > 0'"
+ok "interval must be strictly positive (rejects 0 and negatives)"
+
 
 # ------------------------------------------------ CSV pipeline (fake backend)
 
 section "CSV pipeline (fake backend)"
 
 # --csv to a file
-python3 tests/fake_run.py 0 --csv "$TMP/out.csv" --no-tui \
+python3 tests/fake_run.py 0.001 --csv "$TMP/out.csv" --no-tui \
     >/dev/null 2>"$TMP/err"
 # Note: csv.writer emits RFC 4180 CRLF line endings, so we strip \r
 # before comparing the header line.
@@ -70,7 +82,7 @@ grep -q "wrote 6 rows" "$TMP/err" \
 ok "--csv FILE writes header + 6 rows + summary on stderr"
 
 # Re-running appends without a duplicate header.
-python3 tests/fake_run.py 0 --csv "$TMP/out.csv" --no-tui \
+python3 tests/fake_run.py 0.001 --csv "$TMP/out.csv" --no-tui \
     >/dev/null 2>/dev/null
 [[ "$(grep -c '^timestamp,' "$TMP/out.csv")" -eq 1 ]] \
     || fail "second run should not add a duplicate header"
@@ -79,7 +91,7 @@ python3 tests/fake_run.py 0 --csv "$TMP/out.csv" --no-tui \
 ok "second --csv FILE run appends cleanly"
 
 # --csv -  (stdout, TUI auto-suppressed)
-python3 tests/fake_run.py 0 --csv - >"$TMP/out.csv" 2>"$TMP/err"
+python3 tests/fake_run.py 0.001 --csv - >"$TMP/out.csv" 2>"$TMP/err"
 [[ "$(head -1 "$TMP/out.csv" | tr -d '\r')" == "timestamp,node,sensor,celsius" ]] \
     || fail "--csv - should write header to stdout"
 grep -q "TUI suppressed" "$TMP/err" \
@@ -89,7 +101,7 @@ grep -q "recording CSV to stdout" "$TMP/err" \
 ok "--csv - streams CSV to stdout, banner + auto-suppress note on stderr"
 
 # --csv -  --no-tui  (explicit; no auto-suppress note)
-python3 tests/fake_run.py 0 --csv - --no-tui >/dev/null 2>"$TMP/err"
+python3 tests/fake_run.py 0.001 --csv - --no-tui >/dev/null 2>"$TMP/err"
 ! grep -q "TUI suppressed" "$TMP/err" \
     || fail "--no-tui should silence the auto-suppress note"
 ok "explicit --no-tui silences the auto-suppress note"
@@ -128,12 +140,16 @@ fi
 section "examples/ systemd + logrotate"
 
 UNIT="examples/3-systemd-csv-rotation/cpu-thermals.service"
+# `Restart=on-failure` (rather than =always) so a logrotate-driven
+# `systemctl restart` doesn't count as a failure against StartLimitBurst.
+# Both StartLimit* directives bound noisy retry storms on broken hosts.
 for required in '^\[Unit\]' '^\[Service\]' '^\[Install\]' \
                 '^ExecStart=/usr/local/bin/cpu-thermals --csv -' \
-                '^StandardOutput=append:' '^Restart=always'; do
+                '^StandardOutput=append:' '^Restart=on-failure' \
+                '^StartLimitBurst=' '^StartLimitIntervalSec='; do
     grep -qE "$required" "$UNIT" || fail "systemd unit missing: $required"
 done
-ok "systemd unit has required sections + critical keys"
+ok "systemd unit has required sections + critical keys (incl. restart guards)"
 
 LR="examples/3-systemd-csv-rotation/cpu-thermals.logrotate"
 [[ "$(tr -cd '{' <"$LR" | wc -c)" -eq "$(tr -cd '}' <"$LR" | wc -c)" ]] \

@@ -109,7 +109,7 @@ The `.def` file is the source of truth. Common edits:
 
 ### If you don't see any temperatures
 
-The container will run successfully but cpu-thermals will show `0.0°C` everywhere if no hwmon module is loaded on the host (the backend pads missing readings with 0.0). Run the two `ls` / `cat` commands in the "Verify" section above to confirm host readiness; this is by far the most common cause.
+The container will exit with `error: 'sensors' produced no recognised CPU package readings` and dump the raw `sensors` output for diagnosis if no recognised hwmon module is loaded on the host. Run the two `ls` / `cat` commands in the "Verify" section above to confirm host readiness; an unloaded `coretemp` / `k10temp` module is by far the most common cause.
 
 ## What to look at next
 

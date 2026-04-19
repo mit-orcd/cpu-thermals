@@ -14,7 +14,7 @@ class Renderer(Protocol):
 
 | Module      | Destination                  | Notes                                                                |
 | ----------- | ---------------------------- | -------------------------------------------------------------------- |
-| `table.py`  | stdout (live colored TUI)    | Coloured bars, ASCII chrome. Farewell on Ctrl-C goes to **stderr**.  |
+| `table.py`  | stdout (live colored TUI)    | Coloured bars, ASCII chrome. Uses U+2588 / U+00B0 on UTF-8 terminals; falls back to plain `#` and ` C` when `sys.stdout.encoding` doesn't look UTF-8 (minimal server shells, serial consoles, `LANG=C`). Farewell on Ctrl-C goes to **stderr**.  |
 | `csv.py`    | a CSV file, or stdout (`-`)  | Long-format `(timestamp, node, sensor, celsius)`. Append-safe in file mode; always writes the header in stdout mode (every invocation is a fresh stream). Treats `BrokenPipeError` as a clean shutdown so `... --csv - \| head` doesn't traceback. |
 
 ## Composite: running both at once

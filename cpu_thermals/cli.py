@@ -57,6 +57,26 @@ def run(source: TempSource, renderer: Renderer, interval: float) -> None:
         renderer.stop()
 
 
+def _positive_float(s: str) -> float:
+    """argparse `type=` callable that requires a strictly positive float.
+
+    Rejects negative values (which would make `time.sleep()` raise
+    ValueError in the loop) and zero (which would peg a CPU in a tight
+    loop). Both modes failed silently before; now they fail at parse
+    time with a clear message.
+    """
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid float value: {s!r}")
+    if v <= 0:
+        raise argparse.ArgumentTypeError(
+            f"interval must be > 0 (got {v}); a small positive value like "
+            "0.5 is fine, but 0 would tight-loop and negative would crash"
+        )
+    return v
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cpu-thermals",
@@ -67,9 +87,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "interval",
         nargs="?",
-        type=float,
+        type=_positive_float,
         default=2.0,
-        help="Refresh interval in seconds (default: 2.0)",
+        help="Refresh interval in seconds, must be > 0 (default: 2.0)",
     )
     parser.add_argument(
         "--backend",

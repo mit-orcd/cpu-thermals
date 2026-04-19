@@ -15,7 +15,7 @@ The bare files in this directory are the recommended single-host path. For fleet
 
 - Linux with `systemd` 240+ (for `StandardOutput=append:`). Check with `systemctl --version`.
 - `logrotate` installed and on its usual cron / systemd-timer schedule.
-- `cpu_thermals` installed and on `PATH` as `/usr/local/bin/cpu-thermals` (or edit the `ExecStart=` line of the unit). See [top-level README](../../README.md#install--run).
+- `cpu_thermals` installed and on `PATH`. The static unit ships with `ExecStart=/usr/local/bin/cpu-thermals --csv -` as a sensible default; `install.sh` runs `command -v cpu-thermals` and substitutes the actual path before installing, so the unit works whether the binary lives at `/usr/local/bin/`, `/usr/bin/`, `~/.local/bin/`, a venv path, or anywhere else on `PATH`. (Manual installers should edit `ExecStart=` if their binary is somewhere else.) See [top-level README](../../README.md#install--run).
 - `lm-sensors` configured (`sudo sensors-detect`).
 - Root or `sudo` for the install.
 
@@ -23,7 +23,7 @@ The bare files in this directory are the recommended single-host path. For fleet
 
 | File | Where it goes | Purpose |
 | ---- | ------------- | ------- |
-| `cpu-thermals.service`   | `/etc/systemd/system/`  | The unit. `Type=simple`, `Restart=always`, captures stdout to the log file. |
+| `cpu-thermals.service`   | `/etc/systemd/system/`  | The unit. `Type=simple`, `Restart=on-failure` with `StartLimitBurst=5` / `StartLimitIntervalSec=60` to bound noisy retry storms on misconfigured hosts; captures stdout to the log file. |
 | `cpu-thermals.logrotate` | `/etc/logrotate.d/cpu-thermals` | Daily rotation, keep 30, compress, restart the unit on rotation. |
 | `install.sh`             | (run from here)         | Copies the two files into place and enables the service. |
 
@@ -35,11 +35,13 @@ The one-liner:
 sudo ./install.sh
 ```
 
-Or do it manually:
+Or do it manually (note the `sed` step that fixes `ExecStart=` if your binary isn't at `/usr/local/bin/cpu-thermals`):
 
 ```bash
+BIN_PATH=$(command -v cpu-thermals)        # e.g. /usr/local/bin/cpu-thermals or ~/.local/bin/cpu-thermals
 sudo install -d -m 0755 /var/log/cpu_thermals
-sudo install -m 0644 cpu-thermals.service   /etc/systemd/system/
+sed "s|^ExecStart=/usr/local/bin/cpu-thermals|ExecStart=${BIN_PATH}|" \
+    cpu-thermals.service | sudo tee /etc/systemd/system/cpu-thermals.service > /dev/null
 sudo install -m 0644 cpu-thermals.logrotate /etc/logrotate.d/cpu-thermals
 sudo systemctl daemon-reload
 sudo systemctl enable --now cpu-thermals.service

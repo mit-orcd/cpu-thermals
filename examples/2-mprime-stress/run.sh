@@ -24,7 +24,10 @@ DURATION="${DURATION:-10}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.5}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results/$(date +%Y%m%d-%H%M%S)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MPRIME_DIR="$SCRIPT_DIR/mprime"
+# MPRIME_DIR defaults to a directory next to this script. Override (e.g.
+# MPRIME_DIR=$HOME/.cache/cpu-thermals-mprime) for read-only checkouts
+# or shared workstations.
+MPRIME_DIR="${MPRIME_DIR:-$SCRIPT_DIR/mprime}"
 MPRIME_BIN="mprime"
 
 # ---------------------------------------------------------------- platform
@@ -61,10 +64,28 @@ fi
 
 # ---------------------------------------------------------------- mprime
 
+# Make sure MPRIME_DIR is writable BEFORE we do anything that needs it.
+# Read-only checkouts and shared workstations are common; surfacing the
+# failure here (rather than mid-download) keeps the error message
+# actionable. Skipped silently if the dir already contains a usable
+# mprime binary -- nothing to write.
 if [[ ! -x "$MPRIME_DIR/$MPRIME_BIN" ]]; then
-    echo ">> Downloading mprime for $PLATFORM ..."
-    mkdir -p "$MPRIME_DIR"
-    curl -fL "$MPRIME_URL" -o "$MPRIME_DIR/mprime.tar.gz"
+    if ! mkdir -p "$MPRIME_DIR" 2>/dev/null \
+        || ! ( : > "$MPRIME_DIR/.write_check" ) 2>/dev/null; then
+        echo "error: MPRIME_DIR ($MPRIME_DIR) is not writable." >&2
+        echo "       Set MPRIME_DIR to a writable path, e.g.:" >&2
+        echo "           MPRIME_DIR=\$HOME/.cache/cpu-thermals-mprime ./run.sh" >&2
+        exit 1
+    fi
+    rm -f "$MPRIME_DIR/.write_check"
+
+    echo ">> Downloading mprime for $PLATFORM into $MPRIME_DIR ..."
+    if ! curl -fL "$MPRIME_URL" -o "$MPRIME_DIR/mprime.tar.gz"; then
+        echo "error: download from $MPRIME_URL failed (no network? blocked egress?)." >&2
+        echo "       Either fix connectivity, or pre-place an mprime binary at" >&2
+        echo "       $MPRIME_DIR/$MPRIME_BIN and re-run." >&2
+        exit 1
+    fi
     tar -xzf "$MPRIME_DIR/mprime.tar.gz" -C "$MPRIME_DIR"
     rm -f "$MPRIME_DIR/mprime.tar.gz"
     chmod +x "$MPRIME_DIR/$MPRIME_BIN"
@@ -109,7 +130,11 @@ echo ">> Detected: $SOCKETS socket(s), $TOTAL_CPUS logical CPU(s)"
 mkdir -p "$OUTPUT_DIR"
 TEMPS_CSV="$OUTPUT_DIR/temps.csv"
 PHASE_LOG="$OUTPUT_DIR/phases.csv"
-echo "phase,start_iso,end_iso" > "$PHASE_LOG"
+# phases.csv schema: phase,start_iso,end_iso,status
+# `status` is "ok" for clean / timeout-killed runs; "FAILED:exit=N" for
+# anything else. Surfaces real stress failures that the old `|| true`
+# pattern silently swallowed.
+echo "phase,start_iso,end_iso,status" > "$PHASE_LOG"
 
 # ---------------------------------------------------------------- recorder
 
@@ -141,12 +166,35 @@ iso_now() {
 
 phase() {
     local name="$1"; shift
-    local start_iso end_iso
+    local start_iso end_iso rc status
     start_iso=$(iso_now)
     echo ">> Phase '$name' (${DURATION}s): $*"
-    ( "$@" ) </dev/null >/dev/null 2>&1 || true
+
+    # Capture the underlying command's exit code without aborting the run.
+    # `timeout` returns 124 when it had to SIGTERM the child (which is
+    # our expected case for an infinite-running mprime); 137 if it had
+    # to SIGKILL after the grace period; 143 if the child caught SIGTERM
+    # and exited cleanly. Any other non-zero is a real failure (bad
+    # taskset mask, missing exec bit, broken mprime, etc.) and we want
+    # to know -- the previous `|| true` swallowed everything and gave
+    # false confidence.
+    rc=0
+    ( "$@" ) </dev/null >/dev/null 2>&1 || rc=$?
     end_iso=$(iso_now)
-    echo "$name,$start_iso,$end_iso" >> "$PHASE_LOG"
+
+    case "$rc" in
+        0|124|137|143)
+            status="ok"
+            ;;
+        *)
+            status="FAILED:exit=$rc"
+            echo "!! Phase '$name' FAILED (exit code $rc); continuing." >&2
+            echo "   To debug, re-run the inner command directly:" >&2
+            echo "       $*" >&2
+            ;;
+    esac
+
+    echo "$name,$start_iso,$end_iso,$status" >> "$PHASE_LOG"
     sleep 2   # brief cool-down between phases
 }
 

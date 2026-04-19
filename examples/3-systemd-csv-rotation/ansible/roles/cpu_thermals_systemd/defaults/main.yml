@@ -24,6 +24,13 @@ cpu_thermals_service_state: started     # started | stopped | restarted
 cpu_thermals_service_enabled: true
 cpu_thermals_restart_sec: 5
 
+# Restart-loop protection. After {burst} failed starts within
+# {interval_sec} seconds, systemd marks the unit failed instead of
+# looping forever (which would flood the journal on a misconfigured
+# host). Defaults absorb transient setup hiccups without becoming noise.
+cpu_thermals_start_limit_burst: 5
+cpu_thermals_start_limit_interval_sec: 60
+
 # logrotate config (set _enabled to false if you have a different log
 # rotation system or don't want one).
 cpu_thermals_logrotate_enabled: true

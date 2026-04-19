@@ -84,7 +84,30 @@ class LmSensorsSource:
                 if match:
                     temps.append(float(match.group(1)))
 
-        while len(temps) < 2:
-            temps.append(0.0)
+        if not temps:
+            # Better to fail loudly than to return [0.0, 0.0] which can
+            # look like a valid reading. Most likely cause: the host's
+            # sensors output uses adapter / label names this parser
+            # doesn't recognise yet (a chip beyond Intel coretemp + AMD
+            # k10temp). Print the raw output so the user can file an
+            # issue or extend the parser.
+            sys.stderr.write(
+                "error: 'sensors' produced no recognised CPU package "
+                "readings.\n"
+                "Currently supported adapters: coretemp-isa (Intel "
+                "Package id), k10temp-pci (Tctl).\n"
+                "Raw `sensors` output for diagnosis:\n"
+                "----- BEGIN sensors output -----\n"
+                f"{output}"
+                "----- END sensors output -----\n"
+            )
+            sys.exit(1)
 
-        return [Reading("CPU0", temps[0]), Reading("CPU1", temps[1])]
+        # Return whatever was parsed -- one reading on a single-package
+        # system, two on a dual-package system, etc. The renderers handle
+        # any column count; padding to a fixed width was the old
+        # behaviour and produced misleading "0.0 C" entries.
+        return [
+            Reading(f"CPU{i}", temp)
+            for i, temp in enumerate(temps)
+        ]

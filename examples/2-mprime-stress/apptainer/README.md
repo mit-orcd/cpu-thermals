@@ -121,7 +121,7 @@ No build step, no internet, no `pip` required on the destination. Apptainer + lm
 
 ### If you don't see any temperatures in the captured CSV
 
-The container will run mprime successfully but cpu-thermals will show `0.0°C` if no hwmon module is loaded on the host. Run the `cat /sys/class/hwmon/hwmon*/name` check above; this is by far the most common cause.
+If no recognised hwmon module is loaded on the host, the cpu-thermals process inside the container will exit with `error: 'sensors' produced no recognised CPU package readings` (and dump the raw `sensors` output to the journal) — mprime will keep running, but the captured CSV will be empty. Run the `cat /sys/class/hwmon/hwmon*/name` check above; an unloaded `coretemp` / `k10temp` module is by far the most common cause.
 
 ## What to look at next
 

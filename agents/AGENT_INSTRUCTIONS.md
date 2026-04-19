@@ -154,6 +154,17 @@ Before opening a PR or asking the user to commit a non-trivial change, dispatch 
 
 Run them in parallel — they're independent, and serializing them costs round-trip time you don't need to spend.
 
+## Defensive coding patterns (lessons baked in from review feedback)
+
+These are concrete patterns the codebase has settled into, often as fixes to specific review findings. Mirror them when you write similar code.
+
+- **Validate user input at parse time, not deep in the call stack.** The CLI's `interval` argument uses a custom `_positive_float` callable on `argparse.add_argument(type=...)` so `0` and negative values fail at parse with an actionable message, instead of crashing `time.sleep()` later or pegging a CPU. When you add a new flag whose domain is narrower than its type, write a small `type=` validator the same way.
+- **Backends fail loudly on unrecognised inputs; they do not return placeholder data.** When the lm-sensors parser finds no recognised CPU package readings, it exits 1 with the raw `sensors` output included in the error message. The previous behaviour (padding with `0.0°C`) made empty parses indistinguishable from a freezing CPU. Renderers handle any number of `Reading`s; backends should return only what they actually saw.
+- **Don't swallow exit codes; allowlist the expected ones.** `examples/2-mprime-stress/run.sh`'s `phase()` function captures the underlying command's exit code, treats `0/124/137/143` as expected (clean exit + the various `timeout`-killed cases), and surfaces every other non-zero exit on stderr with a `!! Phase 'X' FAILED` line plus the failing command. The previous `... || true` pattern hid bad `taskset` masks, missing exec bits, and broken stressors. New scripts that wrap external commands should follow the same exit-code-allowlist pattern.
+- **Resolve external paths at install time, don't trust the build-time default.** `examples/3-systemd-csv-rotation/install.sh` runs `command -v cpu-thermals` and `sed`s the actual path into the unit's `ExecStart=` before installing, so the service starts correctly whether the binary lives at `/usr/local/bin/`, `/usr/bin/`, `~/.local/bin/`, or a venv path. Never let an installer run `command -v X` as a precheck and then deploy a config that hardcodes a different `X` path.
+- **Bound systemd restart loops.** Units pair `Restart=on-failure` with `StartLimitBurst=5` / `StartLimitIntervalSec=60` so a permanently broken config (wrong binary path, missing kernel module, etc.) marks the unit failed instead of looping forever and flooding the journal. `Restart=always` plus no limits is the wrong default for a monitor that must be safe to deploy by an unfamiliar admin.
+- **Never assume UTF-8 stdout.** The TUI renderer probes `sys.stdout.encoding` at import time and falls back from U+2588 / U+00B0 to plain `#` / ` C` on non-UTF-8 terminals (minimal server shells, serial consoles, `LANG=C`). Output destined for arbitrary terminals should make the same check.
+
 ## What to read first
 
 If you have 5 minutes:

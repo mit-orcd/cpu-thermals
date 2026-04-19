@@ -201,7 +201,7 @@ The package has two clean axes: **backends** (where temperatures come from) and 
 ## Notes
 
 - On startup the script verifies the underlying tool (`sensors` or `smctemp`) is installed and runnable. If not, it prints a per-platform install hint and exits with code `127`.
-- The TUI display always shows two channels; the lm-sensors backend pads with a `0.0°C` reading if only one CPU package is detected (see the wart note in [`cpu_thermals/backends/README.md`](cpu_thermals/backends/README.md)). The CSV renderer is unaffected.
+- The TUI display shows one column per sensor reading the active backend produces (one per CPU package on Linux, CPU + GPU on macOS Apple Silicon). If the lm-sensors backend can't recognise any sensor blocks in `sensors` output, it exits with a clear error and includes the raw `sensors` output for diagnosis (rather than silently emitting fake `0.0°C` readings). See [`cpu_thermals/backends/README.md`](cpu_thermals/backends/README.md) for the parser's coverage and how to extend it.
 
 ## License
 

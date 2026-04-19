@@ -3,6 +3,14 @@ Description=Continuous CPU thermal capture (cpu_thermals --csv -)
 Documentation=https://github.com/cnh/cpu_thermals
 After=network.target
 
+# Cap restart attempts so a permanently broken config (wrong binary
+# path, missing kernel module, etc.) fails the unit instead of looping
+# forever and flooding the journal. Five retries in 60s is enough to
+# absorb transient setup hiccups (e.g. a slow first sensor read on
+# boot) without becoming noise.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
 [Service]
 Type=simple
 
@@ -18,7 +26,11 @@ StandardOutput=append:/var/log/cpu_thermals/cpu_thermals.csv
 # contaminate the CSV but are still visible via `journalctl -u cpu-thermals`.
 StandardError=journal
 
-Restart=always
+# Restart only on actual failures (not on clean stop, e.g. when
+# logrotate's postrotate script restarts us deliberately). Combined with
+# the StartLimit* settings above, this fails fast on bad configs while
+# still self-healing through transient errors.
+Restart=on-failure
 RestartSec=5
 
 # Run as root for simplest sensors access. For hardening, swap in a

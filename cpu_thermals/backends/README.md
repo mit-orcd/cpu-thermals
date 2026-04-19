@@ -36,6 +36,9 @@ _AUTO_BY_PLATFORM["FreeBSD"] = "mybackend"        # optional auto-select rule
 
 The lazy `from .mybackend import ...` keeps the import graph small: a Linux machine never imports the macOS backend, and vice versa. That's also why each backend's `INSTALL_HELP` string lives next to its implementation rather than in this `__init__`.
 
-## Known wart: padding in `lm_sensors.py`
+## Behaviour on unrecognised sensors output
 
-`LmSensorsSource.read()` always returns exactly two readings, padding with a fake `0.0°C` if only one CPU package was found. This keeps the original two-column TUI layout simple but lies a bit: `0.0°C` is indistinguishable from "no sensor". A future cleanup would let backends return any number of readings and let renderers handle a 1- or 0-column case. The CSV renderer is unaffected — each reading is a row, and a missing sensor would simply not appear.
+`LmSensorsSource.read()` returns one `Reading` per CPU package it finds — labelled `CPU0`, `CPU1`, ... — by parsing the `coretemp-isa` (Intel) and `k10temp-pci` (AMD) blocks in `sensors` output. Two implications:
+
+- If the host has a CPU outside that set (e.g. a workstation chip behind a super-IO sensor like `nct6775`), the parser will find no matches and `read()` exits with an error that includes the raw `sensors` output, so the user can either file an issue or extend the regex set. This used to silently pad with `0.0°C` per channel — that was misleading (an empty parse looked like a valid sensor saying "freezing") and was removed.
+- The renderers (`TableRenderer`, `CsvRenderer`) accept any number of readings per sample. A single-package system shows one column in the TUI and one row per sample in the CSV; dual-package shows two; future N-package CPUs would show N. No code changes needed in the renderer layer when a backend returns a different count.

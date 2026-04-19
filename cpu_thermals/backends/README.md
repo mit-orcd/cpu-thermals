@@ -38,7 +38,8 @@ The lazy `from .mybackend import ...` keeps the import graph small: a Linux mach
 
 ## Behaviour on unrecognised sensors output
 
-`LmSensorsSource.read()` returns one `Reading` per CPU package it finds — labelled `CPU0`, `CPU1`, ... — by parsing the `coretemp-isa` (Intel) and `k10temp-pci` (AMD) blocks in `sensors` output. Two implications:
+`LmSensorsSource.read()` returns one `Reading` per CPU package it finds — labelled `CPU0`, `CPU1`, ... — by parsing the `coretemp-isa` (Intel) and `k10temp-pci` (AMD) blocks in `sensors` output. Implications:
 
 - If the host has a CPU outside that set (e.g. a workstation chip behind a super-IO sensor like `nct6775`), the parser will find no matches and `read()` exits with an error that includes the raw `sensors` output, so the user can either file an issue or extend the regex set. This used to silently pad with `0.0°C` per channel — that was misleading (an empty parse looked like a valid sensor saying "freezing") and was removed.
 - The renderers (`TableRenderer`, `CsvRenderer`) accept any number of readings per sample. A single-package system shows one column in the TUI and one row per sample in the CSV; dual-package shows two; future N-package CPUs would show N. No code changes needed in the renderer layer when a backend returns a different count.
+- Both `read()` and `check()` capture `sensors`' stderr rather than letting it inherit our terminal. lm-sensors prints one `Can't get value of subfeature energyN_input: Kernel interface error` line per inaccessible RAPL energy domain (root-only since CVE-2020-8694) on every invocation, and on a many-thread server those lines used to scroll over the live TUI at refresh-rate. We don't parse those values, so the captured stderr is discarded on the success path and only surfaced when it actually matters: verbatim on a non-zero exit, and inside the diagnostic dump when the parser finds no recognised package readings.

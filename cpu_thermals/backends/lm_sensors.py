@@ -45,25 +45,72 @@ class LmSensorsSource:
             sys.stderr.write(self.install_help)
             sys.exit(127)
 
+        # stdout=PIPE, stderr=PIPE (rather than stderr=STDOUT) so a real
+        # `sensors` startup failure can be reported verbatim, while the
+        # routine RAPL "energy*_input: Kernel interface error" stderr
+        # spam (root-only since CVE-2020-8694) stays out of the user's
+        # terminal. Same shape as read() below.
         try:
-            subprocess.check_output(["sensors"], stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError as e:
-            sys.stderr.write(
-                "Error: 'sensors' is installed but failed to run "
-                f"(exit code {e.returncode}).\n"
-                "Try running 'sudo sensors-detect' to configure kernel modules.\n"
+            proc = subprocess.run(
+                ["sensors"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
             )
-            sys.exit(e.returncode or 1)
         except OSError as e:
             sys.stderr.write(f"Error invoking 'sensors': {e}\n")
             sys.exit(1)
 
+        if proc.returncode != 0:
+            sys.stderr.write(
+                "Error: 'sensors' is installed but failed to run "
+                f"(exit code {proc.returncode}).\n"
+                "Try running 'sudo sensors-detect' to configure kernel modules.\n"
+            )
+            stderr_text = proc.stderr.decode("utf-8", errors="replace")
+            if stderr_text:
+                sys.stderr.write(f"sensors stderr:\n{stderr_text}")
+            sys.exit(proc.returncode or 1)
+
     def read(self) -> List[Reading]:
+        # Capture stderr (rather than letting it inherit our terminal) so
+        # `sensors`' routine "Can't get value of subfeature energyN_input:
+        # Kernel interface error" lines -- one per inaccessible RAPL
+        # domain on every invocation, root-only since CVE-2020-8694 --
+        # don't scroll over the live TUI at refresh-rate. We never parse
+        # those values; only `Package id` (Intel) / `Tctl:` (AMD) on
+        # stdout matter. Real failures (non-zero exit) still surface
+        # both our message and the captured stderr verbatim.
+        # `except OSError` (rather than the broader `except Exception`)
+        # mirrors check() above and matches what subprocess.run actually
+        # raises when the binary isn't executable; we don't want to
+        # accidentally swallow a programming error here.
         try:
-            output = subprocess.check_output(["sensors"]).decode("utf-8")
-        except Exception as e:
+            proc = subprocess.run(
+                ["sensors"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except OSError as e:
             sys.stderr.write(f"Error running 'sensors': {e}\n")
             sys.exit(1)
+
+        if proc.returncode != 0:
+            stderr_text = proc.stderr.decode("utf-8", errors="replace")
+            sys.stderr.write(
+                f"Error running 'sensors' (exit {proc.returncode}):\n"
+                f"{stderr_text}"
+            )
+            sys.exit(1)
+
+        # `errors="replace"` on both streams: lm-sensors output is
+        # nominally UTF-8 (the degree sign is U+00B0), but a
+        # mis-localised host or future locale-related quirk shouldn't
+        # crash the read loop with UnicodeDecodeError mid-capture.
+        # Matches the same defensive pattern used by the TUI renderer.
+        output = proc.stdout.decode("utf-8", errors="replace")
+        stderr_text = proc.stderr.decode("utf-8", errors="replace")
 
         temps: List[float] = []
         adapter_type = None
@@ -89,18 +136,27 @@ class LmSensorsSource:
             # look like a valid reading. Most likely cause: the host's
             # sensors output uses adapter / label names this parser
             # doesn't recognise yet (a chip beyond Intel coretemp + AMD
-            # k10temp). Print the raw output so the user can file an
-            # issue or extend the parser.
+            # k10temp). Print both stdout and the captured stderr so the
+            # user can file an issue or extend the parser. (Stderr is
+            # captured rather than tee'd through to the terminal, see
+            # the comment in read() above; we surface it here so a
+            # genuinely-malformed parse still has full context.)
             sys.stderr.write(
                 "error: 'sensors' produced no recognised CPU package "
                 "readings.\n"
                 "Currently supported adapters: coretemp-isa (Intel "
                 "Package id), k10temp-pci (Tctl).\n"
                 "Raw `sensors` output for diagnosis:\n"
-                "----- BEGIN sensors output -----\n"
+                "----- BEGIN sensors stdout -----\n"
                 f"{output}"
-                "----- END sensors output -----\n"
+                "----- END sensors stdout -----\n"
             )
+            if stderr_text:
+                sys.stderr.write(
+                    "----- BEGIN sensors stderr -----\n"
+                    f"{stderr_text}"
+                    "----- END sensors stderr -----\n"
+                )
             sys.exit(1)
 
         # Return whatever was parsed -- one reading on a single-package

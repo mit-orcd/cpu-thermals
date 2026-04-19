@@ -196,6 +196,58 @@ python3 -m cpu_thermals --help | grep -q "Sub-commands:" \
 ok "legacy monitor invocation still works after dispatch refactor"
 
 
+# ----------------------------------------------- lm-sensors stderr handling
+
+section "lm-sensors stderr handling"
+
+# Regression check for the bug where `sensors` stderr (one
+# "Can't get value of subfeature energyN_input: Kernel interface error"
+# line per inaccessible RAPL domain, root-only since CVE-2020-8694) was
+# inheriting our terminal and scrolling over the live TUI on any host
+# with a bunch of RAPL energy counters. Fix: lm_sensors.py now captures
+# both stdout and stderr; only surfaces stderr on non-zero exit or in
+# the "no recognised readings" diagnostic dump.
+#
+# We exercise this with a fake `sensors` binary on PATH that emits a
+# valid coretemp stdout block + noisy stderr, then assert the noise
+# never reaches our stderr. Gated on Linux: the lm-sensors backend
+# isn't auto-selected on macOS and there's no value in running this
+# under Darwin.
+if [[ "$(uname)" == "Linux" ]]; then
+    mkdir -p "$TMP/bin"
+    cat >"$TMP/bin/sensors" <<'FAKE_SENSORS'
+#!/usr/bin/env bash
+cat <<'STDOUT'
+coretemp-isa-0000
+Adapter: ISA adapter
+Package id 0:  +50.0°C  (high = +80.0°C, crit = +100.0°C)
+STDOUT
+for i in 1 2 3 4 5; do
+    printf "ERROR: Can't get value of subfeature energy%d_input: Kernel interface error\n" "$i" >&2
+done
+exit 0
+FAKE_SENSORS
+    chmod +x "$TMP/bin/sensors"
+
+    PATH="$TMP/bin:$PATH" python3 -c '
+from cpu_thermals.backends.lm_sensors import LmSensorsSource
+src = LmSensorsSource()
+src.check()
+readings = src.read()
+for r in readings:
+    print(f"{r.label}={r.celsius}")
+' >"$TMP/out" 2>"$TMP/err"
+
+    grep -q "^CPU0=50.0$" "$TMP/out" \
+        || fail "fake sensors should yield CPU0=50.0 (got: $(cat "$TMP/out"))"
+    ! grep -q "Kernel interface error" "$TMP/err" \
+        || fail "lm-sensors backend leaked sensors stderr to our stderr (got: $(cat "$TMP/err"))"
+    ok "lm-sensors backend swallows sensors stderr; CPU reading parsed cleanly"
+else
+    ok "not Linux ($(uname)) -- skipping lm-sensors stderr test"
+fi
+
+
 # ------------------------------------------------ apptainer .def files
 
 section "examples/ apptainer .def files"

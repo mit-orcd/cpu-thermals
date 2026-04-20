@@ -325,3 +325,4 @@ fi
 echo ">> Done. Results in: $OUTPUT_DIR"
 echo "    temps.csv  - one row per sensor sample"
 echo "    phases.csv - one row per phase (join on timestamp)"
+echo "    cpu-thermals stats --plot $TEMPS_CSV"

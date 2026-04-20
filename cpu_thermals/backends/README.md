@@ -77,6 +77,18 @@ Older AMD parts (Family 15h/16h/early 17h) typically report only Tctl without Tc
 - AMD PPR (Processor Programming Reference) for Family 19h -- documents Tctl offset
 - Project test data: `reviews/test_on_systems/checking_sensors/node2100/`
 
+## Diagnostics when sensors is missing
+
+When `sensors` is not found on PATH, `check()` probes the kernel before printing advice:
+
+1. **Scan `/sys/class/hwmon/hwmon*/name`** for `coretemp` or `k10temp`. If found, the kernel already has a CPU temperature driver loaded — the user just needs the `sensors` userspace tool (package install or Apptainer container).
+
+2. **If no CPU driver is found**, read `/proc/cpuinfo` for `vendor_id` to suggest the correct `modprobe` command (`coretemp` for Intel, `k10temp` for AMD, both if unknown). The message explains that the kernel module must be loaded first.
+
+3. **Fallback**: if neither sysfs nor cpuinfo are readable (non-Linux, unusual container, etc.), the static `INSTALL_HELP` message is shown unchanged.
+
+Both `_HWMON_DIR` and `_CPUINFO_PATH` are module-level variables that tests can override to inject fake filesystem layouts (same pattern as `fake_run.py` overriding `cli.detect`). The Apptainer container suggestion appears in both cases: directly as an option when the driver is loaded, and after the modprobe step when it isn't.
+
 ## Handling lm-sensors stderr noise
 
 - Both `read()` and `check()` capture `sensors`' stderr rather than letting it inherit our terminal. lm-sensors prints one `Can't get value of subfeature energyN_input: Kernel interface error` line per inaccessible RAPL energy domain (root-only since CVE-2020-8694) on every invocation, and on a many-thread server those lines used to scroll over the live TUI at refresh-rate. We don't parse those values, so the captured stderr is discarded on the success path and only surfaced when it actually matters: verbatim on a non-zero exit, and inside the diagnostic dump when the parser finds no recognised package readings.

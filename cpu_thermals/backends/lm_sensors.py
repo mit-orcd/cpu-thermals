@@ -11,6 +11,7 @@ the ``CPU_THERMALS_AMD_SENSOR`` env var controls the behaviour explicitly.
 
 from __future__ import annotations
 
+import glob as _glob_mod
 import os
 import re
 import shutil
@@ -21,6 +22,112 @@ from typing import List, Optional, Tuple
 from . import Reading
 
 _TEMP_RE = re.compile(r"\+([0-9.]+)")
+
+# Test-overridable paths (same pattern as fake_run.py overriding cli.detect).
+_HWMON_DIR = "/sys/class/hwmon"
+_CPUINFO_PATH = "/proc/cpuinfo"
+
+
+def _detect_hwmon_cpu_driver() -> Optional[str]:
+    """Scan /sys/class/hwmon/hwmon*/name for a known CPU temp driver.
+
+    Returns "coretemp" or "k10temp" on first match, else None.
+    """
+    try:
+        for name_path in sorted(_glob_mod.glob(_HWMON_DIR + "/hwmon*/name")):
+            with open(name_path) as f:
+                name = f.read().strip()
+            if name in ("coretemp", "k10temp"):
+                return name
+    except OSError:
+        pass
+    return None
+
+
+def _detect_cpu_vendor() -> Optional[str]:
+    """Read /proc/cpuinfo for vendor_id. Returns "intel", "amd", or None."""
+    try:
+        with open(_CPUINFO_PATH) as f:
+            for line in f:
+                if line.startswith("vendor_id"):
+                    if "GenuineIntel" in line:
+                        return "intel"
+                    if "AuthenticAMD" in line:
+                        return "amd"
+    except OSError:
+        pass
+    return None
+
+
+def _build_install_help() -> str:
+    """Assemble a targeted diagnostic message when 'sensors' is missing.
+
+    Probes the kernel hwmon layer to distinguish "just need the tool"
+    from "kernel module not loaded". Falls back to the static message
+    on non-Linux or unreadable sysfs.
+    """
+    driver = _detect_hwmon_cpu_driver()
+
+    if driver is not None:
+        # Case 1: hwmon driver found — user just needs the sensors tool.
+        return (
+            "Error: 'sensors' command not found.\n"
+            "\n"
+            f"CPU temperature driver detected ({driver}). Install the 'sensors'\n"
+            "userspace tool to read temperatures.\n"
+            "\n"
+            "  Option A -- install lm-sensors:\n"
+            "\n"
+            "    Debian / Ubuntu:   sudo apt install lm-sensors\n"
+            "    RHEL / Fedora:     sudo dnf install lm_sensors\n"
+            "    Arch Linux:        sudo pacman -S lm_sensors\n"
+            "\n"
+            "  Option B -- Apptainer container (no root / package manager needed):\n"
+            "    See: examples/1-simple-terminal/apptainer/\n"
+            "         examples/2-mprime-stress/apptainer/\n"
+        )
+
+    # Case 2: no hwmon CPU driver detected.
+    vendor = _detect_cpu_vendor()
+
+    if vendor is None and not os.path.isdir(_HWMON_DIR):
+        # Non-Linux or unreadable sysfs — fall back to static message.
+        return INSTALL_HELP
+
+    # Build modprobe hint based on detected vendor.
+    if vendor == "amd":
+        modprobe_line = "    sudo modprobe k10temp                     # AMD"
+    elif vendor == "intel":
+        modprobe_line = "    sudo modprobe coretemp                    # Intel"
+    else:
+        modprobe_line = (
+            "    sudo modprobe coretemp                    # Intel\n"
+            "    sudo modprobe k10temp                     # AMD"
+        )
+
+    return (
+        "Error: 'sensors' command not found.\n"
+        "\n"
+        "No CPU temperature driver found in /sys/class/hwmon/.\n"
+        "The kernel module must be loaded first.\n"
+        "\n"
+        "  Step 1 -- load the kernel module:\n"
+        "\n"
+        f"{modprobe_line}\n"
+        "    cat /sys/class/hwmon/hwmon*/name   # verify driver loaded\n"
+        "\n"
+        "  Step 2 -- install 'sensors' (pick one):\n"
+        "\n"
+        "    Option A -- install lm-sensors:\n"
+        "\n"
+        "      Debian / Ubuntu:   sudo apt install lm-sensors\n"
+        "      RHEL / Fedora:     sudo dnf install lm_sensors\n"
+        "      Arch Linux:        sudo pacman -S lm_sensors\n"
+        "\n"
+        "    Option B -- Apptainer container (no root / package manager needed):\n"
+        "      See: examples/1-simple-terminal/apptainer/\n"
+        "           examples/2-mprime-stress/apptainer/\n"
+    )
 
 
 def _parse_temp(line: str) -> Optional[float]:
@@ -76,7 +183,7 @@ class LmSensorsSource:
 
     def check(self) -> None:
         if shutil.which("sensors") is None:
-            sys.stderr.write(self.install_help)
+            sys.stderr.write(_build_install_help())
             sys.exit(127)
 
         # stdout=PIPE, stderr=PIPE (rather than stderr=STDOUT) so a real

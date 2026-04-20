@@ -369,6 +369,96 @@ else
 fi
 
 
+# ---------------------------------------- sensors-not-found diagnostics
+
+section "sensors-not-found diagnostics"
+
+# These tests exercise the smart install-help message that probes
+# /sys/class/hwmon/ and /proc/cpuinfo before giving targeted advice.
+# Gated on Linux: the detection logic reads Linux-specific paths.
+if [[ "$(uname)" == "Linux" ]]; then
+
+    # 1. hwmon driver found (coretemp): message mentions driver + Apptainer
+    mkdir -p "$TMP/hwmon-test/hwmon0"
+    echo "coretemp" > "$TMP/hwmon-test/hwmon0/name"
+
+    PATH="/usr/bin" python3 -c "
+import cpu_thermals.backends.lm_sensors as lm
+lm._HWMON_DIR = '$TMP/hwmon-test'
+lm._CPUINFO_PATH = '/dev/null'
+msg = lm._build_install_help()
+print(msg)
+" >"$TMP/diag-out" 2>&1
+
+    grep -q "coretemp" "$TMP/diag-out" \
+        || fail "hwmon-found message should mention 'coretemp' (got: $(cat "$TMP/diag-out"))"
+    grep -q "Apptainer" "$TMP/diag-out" \
+        || fail "hwmon-found message should mention Apptainer (got: $(cat "$TMP/diag-out"))"
+    grep -q "examples/1-simple-terminal/apptainer/" "$TMP/diag-out" \
+        || fail "hwmon-found message should mention example path (got: $(cat "$TMP/diag-out"))"
+    ok "hwmon driver found: message mentions driver name + Apptainer + example paths"
+
+    # 2. hwmon driver found: check() exits 127
+    code=$(PATH="/usr/bin" python3 -c "
+import sys, cpu_thermals.backends.lm_sensors as lm
+lm._HWMON_DIR = '$TMP/hwmon-test'
+lm._CPUINFO_PATH = '/dev/null'
+src = lm.LmSensorsSource()
+try:
+    src.check()
+except SystemExit as e:
+    print(e.code)
+    sys.exit(0)
+print('no-exit')
+")
+    [[ "$code" == "127" ]] \
+        || fail "check() should exit 127 when sensors missing (got: $code)"
+    ok "hwmon driver found: check() exits 127"
+
+    # 3. No hwmon driver, AMD vendor: message mentions modprobe k10temp
+    mkdir -p "$TMP/hwmon-empty/hwmon0"
+    echo "nvme" > "$TMP/hwmon-empty/hwmon0/name"
+    cat >"$TMP/fake-cpuinfo-amd" <<'CPUINFO'
+processor	: 0
+vendor_id	: AuthenticAMD
+model name	: AMD EPYC 7763
+CPUINFO
+
+    PATH="/usr/bin" python3 -c "
+import cpu_thermals.backends.lm_sensors as lm
+lm._HWMON_DIR = '$TMP/hwmon-empty'
+lm._CPUINFO_PATH = '$TMP/fake-cpuinfo-amd'
+msg = lm._build_install_help()
+print(msg)
+" >"$TMP/diag-out" 2>&1
+
+    grep -q "modprobe k10temp" "$TMP/diag-out" \
+        || fail "no-driver AMD message should mention 'modprobe k10temp' (got: $(cat "$TMP/diag-out"))"
+    ok "no hwmon driver (AMD): message mentions modprobe k10temp"
+
+    # 4. No hwmon driver: message mentions kernel module must be loaded
+    grep -q "kernel module must be loaded" "$TMP/diag-out" \
+        || fail "no-driver message should say kernel module must be loaded (got: $(cat "$TMP/diag-out"))"
+    ok "no hwmon driver: message mentions kernel module must be loaded"
+
+    # 5. Fallback (non-Linux paths): graceful degradation to static message
+    PATH="/usr/bin" python3 -c "
+import cpu_thermals.backends.lm_sensors as lm
+lm._HWMON_DIR = '/nonexistent/hwmon'
+lm._CPUINFO_PATH = '/nonexistent/cpuinfo'
+msg = lm._build_install_help()
+print(msg)
+" >"$TMP/diag-out" 2>&1
+
+    grep -q "depends on the lm-sensors package" "$TMP/diag-out" \
+        || fail "fallback message should match static INSTALL_HELP (got: $(cat "$TMP/diag-out"))"
+    ok "fallback (non-Linux paths): graceful degradation to static message"
+
+else
+    ok "not Linux ($(uname)) -- skipping sensors-not-found diagnostics"
+fi
+
+
 # ------------------------------------------------ apptainer .def files
 
 section "examples/ apptainer .def files"

@@ -99,6 +99,34 @@ cpu-thermals 0.5                 # refresh every 0.5 seconds
 cpu-thermals --help
 ```
 
+### Option 3: Install in a virtual environment
+
+Using a virtual environment avoids modifying your system Python and keeps
+dependencies isolated — recommended on shared machines and HPC nodes:
+
+```bash
+git clone <this-repo> cpu_thermals
+cd cpu_thermals
+python3 -m venv .venv
+source .venv/bin/activate       # bash/zsh; use .venv/bin/activate.fish for fish
+pip install .
+```
+
+The `cpu-thermals` command is now available inside the activated environment:
+
+```bash
+cpu-thermals                     # default 2-second refresh
+cpu-thermals 0.5 --csv out.csv  # record to CSV
+deactivate                       # leave the venv when done
+```
+
+To update after a `git pull`, re-activate and reinstall:
+
+```bash
+source .venv/bin/activate
+pip install .
+```
+
 ### Choosing a backend
 
 The active backend is auto-selected from the current OS, but you can force one:

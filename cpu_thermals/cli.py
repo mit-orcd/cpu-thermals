@@ -31,6 +31,10 @@ Examples:
 Sub-commands:
   cpu-thermals stats CSVFILE         # per-sensor statistics from a recorded CSV
   cpu-thermals stats CSVFILE --plot  # also draw a Unicode sparkline per sensor
+
+Environment:
+  CPU_THERMALS_AMD_SENSOR   AMD sensor mode: auto (default), tctl, tccd
+                            See cpu_thermals/backends/README.md for details.
 """
 
 

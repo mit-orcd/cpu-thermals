@@ -248,6 +248,127 @@ else
 fi
 
 
+# ---------------------------------------- AMD Tctl vs Tccd sensor selection
+
+section "AMD Tctl vs Tccd sensor selection"
+
+# These tests use fake `sensors` binaries to exercise the AMD sensor
+# mode logic (auto/tctl/tccd).  Gated on Linux for the same reason as
+# the stderr-handling tests above: the lm-sensors backend isn't
+# auto-selected on macOS.
+if [[ "$(uname)" == "Linux" ]]; then
+    mkdir -p "$TMP/amd-bin"
+
+    # -- fake sensors: dual-socket AMD with Tctl + Tccd lines ----------
+    cat >"$TMP/amd-bin/sensors" <<'FAKE_AMD'
+#!/usr/bin/env bash
+cat <<'STDOUT'
+k10temp-pci-00cb
+Adapter: PCI adapter
+Tctl:         +97.8°C
+Tccd1:        +43.8°C
+Tccd2:        +44.8°C
+Tccd3:        +45.5°C
+
+k10temp-pci-00c3
+Adapter: PCI adapter
+Tctl:         +94.9°C
+Tccd1:        +46.2°C
+Tccd2:        +47.2°C
+STDOUT
+exit 0
+FAKE_AMD
+    chmod +x "$TMP/amd-bin/sensors"
+
+    # 1. auto mode picks max(Tccd), not Tctl
+    PATH="$TMP/amd-bin:$PATH" CPU_THERMALS_AMD_SENSOR=auto python3 -c '
+from cpu_thermals.backends.lm_sensors import LmSensorsSource
+src = LmSensorsSource()
+src.check()
+for r in src.read():
+    print(f"{r.label}={r.celsius}")
+' >"$TMP/amd-out" 2>"$TMP/amd-err"
+
+    grep -q "^CPU0=45.5$" "$TMP/amd-out" \
+        || fail "auto mode should report max(Tccd)=45.5 for socket 0 (got: $(cat "$TMP/amd-out"))"
+    grep -q "^CPU1=47.2$" "$TMP/amd-out" \
+        || fail "auto mode should report max(Tccd)=47.2 for socket 1 (got: $(cat "$TMP/amd-out"))"
+    ok "auto mode picks max(Tccd) per socket"
+
+    # 2. auto mode warning on stderr
+    grep -q "fan-control value" "$TMP/amd-err" \
+        || fail "auto mode should warn about Tctl being a fan-control value (stderr: $(cat "$TMP/amd-err"))"
+    ok "auto mode prints Tctl discrepancy warning"
+
+    # 3. tctl override uses Tctl value
+    PATH="$TMP/amd-bin:$PATH" CPU_THERMALS_AMD_SENSOR=tctl python3 -c '
+from cpu_thermals.backends.lm_sensors import LmSensorsSource
+src = LmSensorsSource()
+src.check()
+for r in src.read():
+    print(f"{r.label}={r.celsius}")
+' >"$TMP/amd-out" 2>"$TMP/amd-err"
+
+    grep -q "^CPU0=97.8$" "$TMP/amd-out" \
+        || fail "tctl mode should report Tctl=97.8 for socket 0 (got: $(cat "$TMP/amd-out"))"
+    ok "tctl override reports Tctl value"
+
+    # 4. tccd mode reports individual CCD labels
+    PATH="$TMP/amd-bin:$PATH" CPU_THERMALS_AMD_SENSOR=tccd python3 -c '
+from cpu_thermals.backends.lm_sensors import LmSensorsSource
+src = LmSensorsSource()
+src.check()
+for r in src.read():
+    print(f"{r.label}={r.celsius}")
+' >"$TMP/amd-out" 2>"$TMP/amd-err"
+
+    grep -q "^CPU0:CCD1=" "$TMP/amd-out" \
+        || fail "tccd mode should label as CPU0:CCD1 (got: $(cat "$TMP/amd-out"))"
+    grep -q "^CPU1:CCD2=" "$TMP/amd-out" \
+        || fail "tccd mode should label as CPU1:CCD2 (got: $(cat "$TMP/amd-out"))"
+    ok "tccd mode reports individual CCD labels"
+
+    # 5. no-Tccd fallback: Tctl-only AMD block, auto uses Tctl, no warning
+    cat >"$TMP/amd-bin/sensors-tctl-only" <<'FAKE_TCTL_ONLY'
+#!/usr/bin/env bash
+cat <<'STDOUT'
+k10temp-pci-00cb
+Adapter: PCI adapter
+Tctl:         +65.0°C
+STDOUT
+exit 0
+FAKE_TCTL_ONLY
+    chmod +x "$TMP/amd-bin/sensors-tctl-only"
+    mkdir -p "$TMP/amd-fallback-bin"
+    cp "$TMP/amd-bin/sensors-tctl-only" "$TMP/amd-fallback-bin/sensors"
+
+    PATH="$TMP/amd-fallback-bin:$PATH" CPU_THERMALS_AMD_SENSOR=auto python3 -c '
+from cpu_thermals.backends.lm_sensors import LmSensorsSource
+src = LmSensorsSource()
+src.check()
+for r in src.read():
+    print(f"{r.label}={r.celsius}")
+' >"$TMP/amd-out" 2>"$TMP/amd-err"
+
+    grep -q "^CPU0=65.0$" "$TMP/amd-out" \
+        || fail "auto mode with Tctl-only should fall back to Tctl (got: $(cat "$TMP/amd-out"))"
+    ! grep -q "fan-control value" "$TMP/amd-err" \
+        || fail "auto mode with Tctl-only should not warn (stderr: $(cat "$TMP/amd-err"))"
+    ok "auto mode falls back to Tctl when no Tccd lines exist (no warning)"
+
+    # 6. invalid env var rejected at import time
+    ! PATH="$TMP/amd-bin:$PATH" CPU_THERMALS_AMD_SENSOR=bogus python3 -c '
+from cpu_thermals.backends.lm_sensors import LmSensorsSource
+' 2>"$TMP/amd-err" \
+        || fail "bogus AMD_SENSOR value should exit non-zero"
+    grep -q "is not recognised" "$TMP/amd-err" \
+        || fail "bogus AMD_SENSOR error should say 'is not recognised' (stderr: $(cat "$TMP/amd-err"))"
+    ok "invalid CPU_THERMALS_AMD_SENSOR rejected with actionable error"
+else
+    ok "not Linux ($(uname)) -- skipping AMD Tctl vs Tccd tests"
+fi
+
+
 # ------------------------------------------------ apptainer .def files
 
 section "examples/ apptainer .def files"

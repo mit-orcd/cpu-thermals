@@ -11,6 +11,7 @@ A small CLI utility that displays live CPU temperatures with color-coded reading
 - `--csv` recording to a self-describing file (table stays on screen too)
 - `--no-tui` for silent, headless capture (cron / SSH friendly)
 - `cpu-thermals stats CSVFILE` post-processing sub-command for per-sensor min/max/mean/median/stdev/kurtosis (with optional `--plot` sparkline)
+- AMD chiplet CPUs (Zen 2+): automatically reports physical die temps (Tccd) instead of the synthetic Tctl fan-control value; override with `CPU_THERMALS_AMD_SENSOR` env var (see [`cpu_thermals/backends/README.md`](cpu_thermals/backends/README.md#amd-tctl-vs-tccd-chiplet-architectures))
 - Friendly startup check that tells you exactly how to install the missing tool per platform
 
 ## Requirements

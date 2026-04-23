@@ -19,3 +19,7 @@ cpu_thermals-*.csv
 # from the repo root this lands here rather than in the per-example
 # .gitignore'd location).
 results/
+
+# Apptainer stress per-run work directories
+# (mktemp -d cpu-thermals-stress-XXXXXX in container-entry.sh)
+cpu-thermals-stress-??????
